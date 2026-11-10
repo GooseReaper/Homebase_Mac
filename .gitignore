@@ -1,0 +1,17 @@
+# Private data: accounts, encrypted vaults, and the old unencrypted database
+data/
+*.sqlite3
+*.hbx
+*.hbx.bak
+*.hbbackup
+accounts.json
+
+# Local environment and caches
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+
+# Old code snapshots (kept on this computer only)
+backup_before_v2/
+backup_before_v3/

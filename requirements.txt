@@ -1,0 +1,10 @@
+# Required: encryption for accounts.
+cryptography>=42
+# Strongly recommended: JPG/WebP photos, pasting photos, AI photo resizing.
+Pillow>=10
+# Recommended: trusted certificates for ChatGPT/Claude connections on python.org builds of Python.
+certifi
+# Optional: QR code on the two-factor setup screen.
+qrcode>=7
+# Optional: drag and drop photos from Finder / File Explorer.
+tkinterdnd2-universal
