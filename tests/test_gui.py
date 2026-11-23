@@ -111,6 +111,39 @@ class GuiTests(unittest.TestCase):
         self.app.open_or_focus('activity')
         self.pump()
 
+    def test_create_edit_and_delete_custom_theme(self):
+        from theme_editor import ThemeEditor
+        editor = ThemeEditor(self.app)
+        editor.name.set('Ocean')
+        editor.colors.update(bg='#0b1d2a', surface='#12293a', ink='#e8f4ff', accent='#00b4d8')
+        editor.redraw()
+        self.assertEqual(editor.warning.get(), '')
+        editor.save()
+        self.pump()
+        key = self.inv.get_setting('theme')
+        self.assertTrue(key.startswith('custom_ocean'))
+        self.assertEqual(self.appmod.T['bg'], '#0b1d2a')
+        self.assertTrue(self.appmod.T['is_dark'])
+        editor = ThemeEditor(self.app, key)
+        editor.colors['accent'] = '#ff00aa'
+        editor.save()
+        self.pump()
+        self.assertEqual(self.appmod.T['accent'], '#ff00aa')
+        editor = ThemeEditor(self.app, key)
+        with patch('theme_editor.messagebox.askyesno', return_value=True):
+            editor.delete()
+        self.pump()
+        self.assertEqual(self.inv.get_setting('theme'), 'modern')
+        self.assertEqual(self.inv.get_setting('custom_themes'), {})
+
+    def test_low_contrast_warning(self):
+        from theme_editor import ThemeEditor
+        editor = ThemeEditor(self.app)
+        editor.colors.update(bg='#777777', ink='#787878')
+        editor.redraw()
+        self.assertIn('hard to read', editor.warning.get())
+        editor.window.destroy()
+
     def test_item_dialog_opens_and_closes(self):
         self.app.add_item()
         self.pump()

@@ -143,10 +143,122 @@ class Fonts:
         return (family, scaled, weight) if weight != "normal" else (family, scaled)
 
 
+# ------------------------------------------------------------------ custom themes
+CUSTOM_THEMES = {}   # filled from your saved settings by set_custom_themes()
+EDITABLE = (("bg", "Background"), ("surface", "Cards and panels"), ("ink", "Text"), ("muted", "Quiet text"),
+            ("accent", "Accent"), ("button", "Buttons"), ("header_band", "Header bar"), ("warning", "Low-stock warning"))
+
+
+def clean_hex(value):
+    """'#AbC' or 'abcdef' → '#aabbcc'; anything else → None."""
+    text = str(value or "").strip().lstrip("#").lower()
+    if len(text) == 3:
+        text = "".join(ch * 2 for ch in text)
+    if len(text) == 6 and all(ch in "0123456789abcdef" for ch in text):
+        return "#" + text
+    return None
+
+
+def mix(a, b, amount=0.5):
+    """Blend two #rrggbb colors: amount 0 gives a, 1 gives b."""
+    a, b = clean_hex(a), clean_hex(b)
+    channels = [round(int(a[i:i + 2], 16) * (1 - amount) + int(b[i:i + 2], 16) * amount) for i in (1, 3, 5)]
+    return "#" + "".join(f"{c:02x}" for c in channels)
+
+
+def luminance(color):
+    """Relative brightness from 0 (black) to 1 (white), using the WCAG formula."""
+    color = clean_hex(color)
+    def linear(c):
+        c /= 255
+        return c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+    r, g, b = (linear(int(color[i:i + 2], 16)) for i in (1, 3, 5))
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+def contrast(a, b):
+    """WCAG contrast ratio, 1 to 21. Body text should be at least 4.5."""
+    hi, lo = sorted((luminance(a), luminance(b)), reverse=True)
+    return (hi + 0.05) / (lo + 0.05)
+
+
+def best_text(color):
+    """Black or white, whichever is easier to read on `color`."""
+    return max(("#000000", "#ffffff"), key=lambda text: contrast(text, color))
+
+
+def build_custom(base, colors, options=None):
+    """A full theme from a built-in base plus the few colors you picked (the rest is worked out)."""
+    t = dict(THEMES.get(base, THEMES["modern"]))
+    options = options or {}
+    for key in ("uppercase", "bevel"):
+        if key in options:
+            t[key] = bool(options[key])
+    if options.get("title"):
+        t["title"], t["title_prefix"] = str(options["title"])[:30], ""
+    if options.get("subtitle") is not None:
+        t["subtitle"] = str(options["subtitle"])[:80]
+    picked = {key: clean_hex(value) for key, value in (colors or {}).items() if key in dict(EDITABLE)}
+    if "header_band" in (colors or {}) and not picked.get("header_band"):
+        picked["header_band"] = None                  # header bar turned off
+    picked = {k: v for k, v in picked.items() if v is not None or k == "header_band"}
+    t.update(picked)
+    if "bg" in picked:
+        t.update(tab_strip=mix(t["bg"], t["ink"], 0.06), heading_bg=mix(t["bg"], t["surface"]),
+                 photo_bg=mix(t["bg"], t["accent"], 0.12))
+    if "surface" in picked:
+        t.update(field=t["surface"], tab_selected=t["surface"])
+    if "bg" in picked or "surface" in picked:
+        t.update(row_alt=mix(t["surface"], t["bg"]), tab_bg=mix(t["bg"], t["ink"], 0.1))
+    if picked.keys() & {"bg", "ink", "surface"}:
+        t.update(border=mix(t["bg"], t["ink"], 0.15), dark=mix(t["bg"], t["ink"], 0.3), light=mix(t["surface"], "#ffffff", 0.5))
+    if "muted" in picked:
+        t["heading_fg"] = t["muted"]
+    if "accent" in picked:
+        a = t["accent"]
+        t.update(accent_hover=shade(a, 0.8), eyebrow=a, accent_disabled=mix(a, t["bg"], 0.6))
+        if not t["bevel"]:
+            t.update(primary=a, primary_hover=shade(a, 0.8), primary_text=best_text(a))
+        if t.get("stripe"):
+            t["stripe"] = a
+    if "button" in picked:
+        t.update(button_hover=mix(t["button"], t["ink"], 0.08), button_text=best_text(t["button"]))
+    if "header_band" in picked and t["header_band"]:
+        band = t["header_band"]
+        t["header_fg"] = t["accent"] if contrast(t["accent"], band) >= 4.5 else best_text(band)
+        t["header_sub_fg"] = mix(t["header_fg"], band, 0.35)
+    if "warning" in picked:
+        t["stat_warning"] = t["warning"]
+    t["is_dark"] = luminance(t["bg"]) < 0.35
+    if t["is_dark"] and "accent" in picked:
+        t.update(select_bg=t["accent"], select_fg=best_text(t["accent"]), heading_fg=t["accent"])
+    elif "accent" in picked:
+        t.update(select_bg=mix(t["accent"], t["surface"], 0.8), select_fg=shade(t["accent"], 0.7))
+    t["description"] = options.get("description") or f"Your theme, based on {THEMES.get(base, THEMES['modern'])['name']}."
+    return t
+
+
+def set_custom_themes(saved):
+    """Rebuild CUSTOM_THEMES from settings['custom_themes'] = {id: {name, base, colors, options}}."""
+    CUSTOM_THEMES.clear()
+    for key, data in (saved or {}).items():
+        try:
+            theme = build_custom(data.get("base", "modern"), data.get("colors", {}), data.get("options", {}))
+        except Exception:
+            continue          # skip a damaged entry rather than failing to start
+        theme["name"] = str(data.get("name") or "My theme")[:24]
+        theme["custom"] = True
+        CUSTOM_THEMES[key] = theme
+
+
+def all_themes():
+    return {**THEMES, **CUSTOM_THEMES}
+
+
 def apply_theme(root, settings):
     """Make `settings` the active look for every ttk widget. Returns a Fonts helper."""
     T.clear()
-    T.update(THEMES.get(settings.get("theme"), THEMES["modern"]))
+    T.update(all_themes().get(settings.get("theme"), THEMES["modern"]))
     accent = settings.get("accent") or ""
     if accent.startswith("#") and len(accent) == 7:
         T.update(accent=accent, accent_hover=shade(accent, 0.8), eyebrow=accent)

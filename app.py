@@ -19,7 +19,7 @@ from pathlib import Path
 import ai
 from ai import AIError, PROVIDERS
 from inventory import CATEGORIES, SORTS, Inventory, InventoryError
-from themes import DENSITY, THEMES, T, apply_theme, font_families
+from themes import DENSITY, THEMES, T, all_themes, apply_theme, font_families, set_custom_themes
 
 try:
     import tkinter as tk
@@ -33,6 +33,7 @@ if tk is not None:
     from ui_common import (CONTEXT_BUTTONS, IS_MAC, MIDDLE_BUTTON, MOD, NEW_TAB_CLICK, PHOTO_TYPES, Background, accel,
                            currency, install_wheel, make_root, paint_photo, read_photo, register_drop, scroll_frame)
     from ui_dialogs import ItemDialog, LocationDialog, ReviewDialog
+    from theme_editor import ThemeEditor
 else:   # tests and --check still work without Tkinter
     IS_MAC = sys.platform == "darwin"
     MOD = "⌘" if IS_MAC else "Ctrl+"
@@ -71,7 +72,8 @@ class HomebaseApp:
         for key, options in CHOICES.items():
             if self.settings[key] not in options:
                 self.settings[key] = DEFAULT_SETTINGS[key]
-        if self.settings["theme"] not in THEMES:
+        set_custom_themes(inventory.get_setting("custom_themes", {}))   # your own themes, saved per account
+        if self.settings["theme"] not in all_themes():
             self.settings["theme"] = "modern"
         if self.settings["default_sort"] not in SORTS:
             self.settings["default_sort"] = SORTS[0]
@@ -516,7 +518,7 @@ class HomebaseApp:
             view_menu.add_command(label=PAGE_NAMES[page], command=lambda p=page: self.open_or_focus(p))
         view_menu.add_separator()
         self.theme_choice = tk.StringVar(value=self.settings["theme"])
-        for key, theme in THEMES.items():
+        for key, theme in all_themes().items():
             view_menu.add_radiobutton(label=f"{theme['name']} style", value=key, variable=self.theme_choice,
                                       command=lambda: self.change_setting("theme", self.theme_choice.get()))
         menubar.add_cascade(label="View", menu=view_menu)
@@ -896,22 +898,28 @@ class HomebaseApp:
         look = section("Appearance")
         ttk.Label(look, text="Style", style="Eyebrow.TLabel").grid(row=0, column=0, columnspan=4, sticky="w", pady=(0, 8))
         self.theme_var = tk.StringVar(value=self.settings["theme"])
-        for index, (key, theme) in enumerate(THEMES.items()):
-            look.columnconfigure(index, weight=1, uniform="theme")
+        themes_list = list(all_themes().items())
+        for index, (key, theme) in enumerate(themes_list):
+            if index < 4:
+                look.columnconfigure(index, weight=1, uniform="theme")
             chosen = key == self.settings["theme"]
             card = tk.Frame(look, bg=T["surface"], highlightthickness=3 if chosen else 1,
                             highlightbackground=T["accent"] if chosen else T["dark"], padx=8, pady=8, cursor="hand2")
-            card.grid(row=1, column=index, sticky="nsew", padx=(0 if index == 0 else 8, 0))
+            card.grid(row=1 + index // 4, column=index % 4, sticky="nsew", padx=(0 if index % 4 == 0 else 8, 0), pady=(0, 8))
             preview = tk.Canvas(card, width=190, height=112, highlightthickness=0, bg=theme["bg"], cursor="hand2")
             preview.pack(fill="x")
             preview.bind("<Configure>", lambda event, c=preview, t=theme: self.draw_theme_preview(c, t, event.width))
             ttk.Radiobutton(card, text=theme["name"], value=key, variable=self.theme_var, style="Card.TRadiobutton",
                             command=lambda: self.change_setting("theme", self.theme_var.get())).pack(anchor="w", pady=(8, 2))
-            tk.Label(card, text=theme["description"], bg=T["surface"], fg=T["muted"], font=self.font(9), wraplength=180, justify="left").pack(anchor="w")
+            tk.Label(card, text=theme.get("description", ""), bg=T["surface"], fg=T["muted"], font=self.font(9), wraplength=180, justify="left").pack(anchor="w")
+            if theme.get("custom"):
+                ttk.Button(card, text="Edit…", style="Small.TButton", command=lambda k=key: ThemeEditor(self, k)).pack(anchor="w", pady=(6, 0))
             for widget in (card, preview):
                 widget.bind("<Button-1>", lambda event, k=key: self.change_setting("theme", k))
         fonts = ttk.Frame(look)
-        fonts.grid(row=2, column=0, columnspan=4, sticky="ew", pady=(16, 0))
+        cards_end = 1 + (len(themes_list) + 3) // 4   # first grid row below the theme cards
+        ttk.Button(look, text="＋ Create theme…", command=lambda: ThemeEditor(self)).grid(row=cards_end, column=0, sticky="w", pady=(4, 0))
+        fonts.grid(row=cards_end + 1, column=0, columnspan=4, sticky="ew", pady=(16, 0))
         families = ["Theme default", *font_families(self.root)]
         for col, (label, key) in enumerate((("Text font", "font_body"), ("Heading font", "font_display"))):
             box = ttk.Frame(fonts)
@@ -1062,6 +1070,19 @@ class HomebaseApp:
             canvas.create_text(14, y + 10, text=name.upper() if theme["uppercase"] else name, anchor="w",
                                fill=theme["select_fg"] if index == 0 else theme["ink"], font=("Helvetica", 8))
             y += 24
+
+    def use_custom_theme(self, key):
+        """Switch to a theme you just saved (or back to Modern if you deleted the one in use)."""
+        if key is None:
+            if self.settings["theme"] not in all_themes():
+                self.change_setting("theme", "modern")
+            else:
+                self.later("rebuild", 10, self.rebuild)
+        elif self.settings["theme"] == key:
+            self.later("rebuild", 10, self.rebuild)      # same theme, new colors
+        else:
+            self.change_setting("theme", key)
+        self.set_status("Theme saved")
 
     def choose_accent(self):
         color = colorchooser.askcolor(color=T["accent"], parent=self.root, title="Choose an accent color")[1]
